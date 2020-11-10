@@ -1,0 +1,178 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "identifier": {
+      "type": "string"
+    },
+    "staticWebAppLocation": {
+      "type": "string",
+      "defaultValue": "eastasia",
+      "allowedValues": [
+        "centralus",
+        "eastus2",
+        "eastasia",
+        "westeurope",
+        "westus2"
+      ]
+    },
+    "staticWebAppSkuTier": {
+      "type": "string",
+      "defaultValue": "Free",
+      "allowedValues": [
+        "Free"
+      ]
+    },
+    "staticWebAppSkuName": {
+      "type": "string",
+      "defaultValue": "Free",
+      "allowedValues": [
+        "Free"
+      ]
+    },
+    "staticWebAppRepositoryUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "Set GitHub repository URL like https://github.com/<owner>/<repository>."
+      }
+    },
+    "staticWebAppRepositoryToken": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Set GitHub personal access token with public_repo scope."
+      }
+    },
+    "staticWebAppBranch": {
+      "type": "string",
+      "defaultValue": "main"
+    },
+    "staticWebAppAppLocation": {
+      "type": "string",
+      "defaultValue": "frontend"
+    },
+    "staticWebAppApiLocation": {
+      "type": "string",
+      "defaultValue": "api"
+    },
+    "staticWebAppAppArtifactLocation": {
+      "type": "string",
+      "defaultValue": "dist"
+    },
+    "staticWebAppExists": {
+      "type": "bool",
+      "defaultValue": false
+    },
+    "cosmosDbEnableFreeTier": {
+      "type": "bool",
+      "defaultValue": true
+    },
+    "cosmosDbDatabaseThroughput": {
+      "type": "int",
+      "defaultValue": 400
+    }
+  },
+  "functions": [],
+  "variables": {
+    "staticWebAppName": "[concat('static-', parameters('identifier'))]",
+    "cosmosDbAccountName": "[concat('cosmos-', parameters('identifier'))]",
+    "cosmosDbDatabaseName": "games",
+    "cosmosDbContainers": [
+      {
+        "name": "global-results",
+        "partitionKeyPath": "/stage/id"
+      },
+      {
+        "name": "player-results",
+        "partitionKeyPath": "/lineUser/id"
+      }
+    ]
+  },
+  "resources": [
+    {
+      "condition": "[not(parameters('staticWebAppExists'))]",
+      "name": "[variables('staticWebAppName')]",
+      "type": "Microsoft.Web/staticSites",
+      "apiVersion": "2020-06-01",
+      "location": "[parameters('staticWebAppLocation')]",
+      "properties": {
+        "repositoryUrl": "[parameters('staticWebAppRepositoryUrl')]",
+        "branch": "[parameters('staticWebAppBranch')]",
+        "repositoryToken": "[parameters('staticWebAppRepositoryToken')]",
+        "buildProperties": {
+          "appLocation": "[parameters('staticWebAppAppLocation')]",
+          "apiLocation": "[parameters('staticWebAppApiLocation')]",
+          "appArtifactLocation": "[parameters('staticWebAppAppArtifactLocation')]"
+        }
+      },
+      "sku": {
+        "Tier": "[parameters('staticWebAppSkuTier')]",
+        "Name": "[parameters('staticWebAppSkuName')]"
+      }
+    },
+    {
+      "name": "[variables('cosmosDbAccountName')]",
+      "type": "Microsoft.DocumentDB/databaseAccounts",
+      "apiVersion": "2020-04-01",
+      "location": "[resourceGroup().location]",
+      "tags": {
+      },
+      "kind": "GlobalDocumentDB",
+      "properties": {
+        "consistencyPolicy": {
+          "defaultConsistencyLevel": "Session"
+        },
+        "locations": [
+          {
+            "locationName": "[resourceGroup().location]",
+            "failoverPriority": 0
+          }
+        ],
+        "databaseAccountOfferType": "Standard",
+        "enableFreeTier": "[parameters('cosmosDbEnableFreeTier')]"
+      },
+      "resources": [
+        {
+          "name": "[variables('cosmosDbDatabaseName')]",
+          "type": "sqlDatabases",
+          "apiVersion": "2020-04-01",
+          "location": "[resourceGroup().location]",
+          "properties": {
+            "resource": {
+              "id": "[variables('cosmosDbDatabaseName')]"
+            },
+            "options": {
+              "throughput": "[parameters('cosmosDbDatabaseThroughput')]"
+            }
+          },
+          "dependsOn": [
+            "[resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosDbAccountName'))]"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "[concat(variables('cosmosDbAccountName'), '/', variables('cosmosDbDatabaseName'), '/', variables('cosmosDbContainers')[copyIndex('cosmosDbContainersCopy')].name)]",
+      "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
+      "apiVersion": "2020-04-01",
+      "properties": {
+        "resource": {
+          "id": "[variables('cosmosDbContainers')[copyIndex('cosmosDbContainersCopy')].name]",
+          "partitionKey": {
+            "paths": [
+              "[variables('cosmosDbContainers')[copyIndex('cosmosDbContainersCopy')].partitionKeyPath]"
+            ]
+          }
+        },
+        "options": {}
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', variables('cosmosDbAccountName'), variables('cosmosDbDatabaseName'))]"
+      ],
+      "copy": {
+        "name": "cosmosDbContainersCopy",
+        "count": "[length(variables('cosmosDbContainers'))]"
+      }
+    }
+  ],
+  "outputs": {}
+}
